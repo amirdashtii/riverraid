@@ -66,7 +66,8 @@ func draw(wg *sync.WaitGroup, w *World) {
 
 // drawMap function draws the river obstacles on the screen.
 func drawMap(w *World) {
-	for y := 0; y < w.height; y++ {
+
+	for y := 0; y < len(w.river); y++ {
 		for lx := 0; lx < w.river[y].l; lx++ {
 			termbox.SetCell(lx, y, ' ', termbox.ColorDefault, termbox.ColorGreen)
 		}
@@ -176,11 +177,11 @@ func listenToKeyboard(w *World) {
 				}
 			default:
 				switch ev.Key {
+				// TODO  همزمانی تیر و حرکت
 				case termbox.KeySpace:
 					// Shoot bullet when space key is pressed
 					newBullet := Bullet{location: Location{x: w.player.location.x, y: w.player.location.y}}
 					w.bullets = append(w.bullets, newBullet)
-
 				}
 			}
 		case termbox.EventError:
@@ -198,23 +199,53 @@ func main() {
 	maxX, maxY := termbox.Size()
 
 	// Initialize the game
-	rivers := make([]River, maxY+1)
-	for i := maxY; i >= 0; i-- {
-		rivers[i] = River{l: maxX/2 - 5, r: maxX/2 + 5}
-	}
-
 	world := World{
 		player: Player{
 			symbol:   'A',
 			location: Location{x: maxX / 2, y: maxY - 2},
 			died:     false,
 		},
-		river:     rivers,
 		width:     maxX,
 		height:    maxY,
 		nextEnd:   maxX/2 + 10,
 		nextStart: maxX/2 - 10,
+		river:     make([]River, maxY)}
+
+	for y := maxY - 1; y >= 0; y-- {
+		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
 	}
+	for y := maxY - 1; y >= 0; y-- {
+		if y <= 2*maxY/3 {
+			if world.nextEnd < world.river[y+1].r {
+				world.river[y].r = world.river[y+1].r - 1
+			}
+			if world.nextEnd > world.river[y+1].r {
+				world.river[y].r = world.river[y+1].r + 1
+			}
+			if world.nextStart < world.river[y+1].l {
+				world.river[y].l = world.river[y+1].l - 1
+			}
+			if world.nextStart > world.river[y+1].l {
+				world.river[y].l = world.river[y+1].l + 1
+			}
+			if world.nextStart == world.river[y+1].l {
+				world.river[y].l = world.nextStart
+			}
+			if world.nextEnd == world.river[y+1].r {
+				world.river[y].r = world.nextEnd
+			}
+
+			// Randomize river boundaries
+			if world.nextStart == world.river[y].l || world.nextEnd == world.river[y].r || (world.river[y].l+5) >= world.river[y].r {
+				if rand.Intn(10) > 8 {
+					world.nextStart = rand.Intn(40) - 20 + world.nextStart
+					world.nextEnd = 50 - rand.Intn(40) + world.nextStart
+				}
+			}
+
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
