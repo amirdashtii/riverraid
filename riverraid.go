@@ -43,6 +43,58 @@ type World struct {
 	bullets   []Bullet // List of bullets fired by the player
 }
 
+func newWorld() *World {
+	maxX, maxY := termbox.Size()
+
+	world := World{
+		player: Player{
+			symbol:   'A',
+			location: Location{x: maxX / 2, y: maxY - 2},
+			died:     false,
+		},
+		width:     maxX,
+		height:    maxY,
+		nextEnd:   maxX/2 + 10,
+		nextStart: maxX/2 - 10,
+		river:     make([]River, maxY)}
+
+	for y := maxY - 1; y >= 0; y-- {
+		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
+	}
+	for y := maxY - 1; y >= 0; y-- {
+		if y <= 2*maxY/3 {
+			if world.nextEnd < world.river[y+1].r {
+				world.river[y].r = world.river[y+1].r - 1
+			}
+			if world.nextEnd > world.river[y+1].r {
+				world.river[y].r = world.river[y+1].r + 1
+			}
+			if world.nextStart < world.river[y+1].l {
+				world.river[y].l = world.river[y+1].l - 1
+			}
+			if world.nextStart > world.river[y+1].l {
+				world.river[y].l = world.river[y+1].l + 1
+			}
+			if world.nextStart == world.river[y+1].l {
+				world.river[y].l = world.nextStart
+			}
+			if world.nextEnd == world.river[y+1].r {
+				world.river[y].r = world.nextEnd
+			}
+
+			// Randomize river boundaries
+			if world.nextStart == world.river[y].l || world.nextEnd == world.river[y].r || (world.river[y].l+5) >= world.river[y].r {
+				if rand.Intn(10) > 8 {
+					world.nextStart = rand.Intn(40) - 20 + world.nextStart
+					world.nextEnd = 50 - rand.Intn(40) + world.nextStart
+				}
+			}
+
+		}
+	}
+	return &world
+}
+
 // draw function is responsible for rendering the game world.
 func draw(wg *sync.WaitGroup, w *World) {
 	defer wg.Done()
@@ -196,73 +248,27 @@ func main() {
 		panic(err)
 	}
 	defer termbox.Close()
-	maxX, maxY := termbox.Size()
 
 	// Initialize the game
-	world := World{
-		player: Player{
-			symbol:   'A',
-			location: Location{x: maxX / 2, y: maxY - 2},
-			died:     false,
-		},
-		width:     maxX,
-		height:    maxY,
-		nextEnd:   maxX/2 + 10,
-		nextStart: maxX/2 - 10,
-		river:     make([]River, maxY)}
-
-	for y := maxY - 1; y >= 0; y-- {
-		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
-	}
-	for y := maxY - 1; y >= 0; y-- {
-		if y <= 2*maxY/3 {
-			if world.nextEnd < world.river[y+1].r {
-				world.river[y].r = world.river[y+1].r - 1
-			}
-			if world.nextEnd > world.river[y+1].r {
-				world.river[y].r = world.river[y+1].r + 1
-			}
-			if world.nextStart < world.river[y+1].l {
-				world.river[y].l = world.river[y+1].l - 1
-			}
-			if world.nextStart > world.river[y+1].l {
-				world.river[y].l = world.river[y+1].l + 1
-			}
-			if world.nextStart == world.river[y+1].l {
-				world.river[y].l = world.nextStart
-			}
-			if world.nextEnd == world.river[y+1].r {
-				world.river[y].r = world.nextEnd
-			}
-
-			// Randomize river boundaries
-			if world.nextStart == world.river[y].l || world.nextEnd == world.river[y].r || (world.river[y].l+5) >= world.river[y].r {
-				if rand.Intn(10) > 8 {
-					world.nextStart = rand.Intn(40) - 20 + world.nextStart
-					world.nextEnd = 50 - rand.Intn(40) + world.nextStart
-				}
-			}
-
-		}
-	}
+	world := newWorld()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// Start drawing and physics goroutines
-	go draw(&wg, &world)
-	go physics(&wg, &world)
+	go draw(&wg, world)
+	go physics(&wg, world)
 
 	// Start a separate goroutine for moving bullets
 	go func() {
 		for {
-			moveBullets(&world)
+			moveBullets(world)
 			time.Sleep(100 * time.Millisecond) // Adjust the sleep time for bullet speed
 		}
 	}()
 
 	// Listen to keyboard input
-	go listenToKeyboard(&world)
+	go listenToKeyboard(world)
 
 	wg.Wait()
 }
