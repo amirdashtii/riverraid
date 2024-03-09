@@ -2,7 +2,6 @@ package main
 
 import (
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/nsf/termbox-go"
@@ -32,6 +31,12 @@ type River struct {
 	r int // Right boundary of the river
 }
 
+var shouldExecute bool
+
+type Enemy struct {
+	location Location
+}
+
 // World represents the game world.
 type World struct {
 	player    Player   // The player
@@ -41,6 +46,7 @@ type World struct {
 	nextStart int      // Next start position of the river
 	nextEnd   int      // Next end position of the river
 	bullets   []Bullet // List of bullets fired by the player
+	enemies   []Enemy
 }
 
 func newWorld() *World {
@@ -95,30 +101,31 @@ func newWorld() *World {
 	return &world
 }
 
+func hit(l1, l2 Location) bool {
+	return l1.x == l2.x && l1.y == l2.y
+}
+
 // draw function is responsible for rendering the game world.
-func draw(wg *sync.WaitGroup, w *World) {
-	defer wg.Done()
-	for !w.player.died {
-		termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+func draw(w *World) {
+	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 
-		// Draw the map
-		drawMap(w)
+	// Draw the map
+	drawMap(w)
 
-		// Draw the bullets
-		drawBullets(w)
+	// Draw the player
+	drawPlayer(w)
 
-		// Draw the player
-		drawPlayer(w)
+	// Draw the bullets
+	drawBullets(w)
 
-		termbox.HideCursor()
-		termbox.Flush()
-		time.Sleep(200 * time.Millisecond)
-	}
+	// Dray the enemies
+	drawEnemies(w)
+
+	termbox.Flush()
 }
 
 // drawMap function draws the river obstacles on the screen.
 func drawMap(w *World) {
-
 	for y := 0; y < len(w.river); y++ {
 		for lx := 0; lx < w.river[y].l; lx++ {
 			termbox.SetCell(lx, y, ' ', termbox.ColorDefault, termbox.ColorGreen)
@@ -134,19 +141,29 @@ func drawMap(w *World) {
 
 // moveBullets function updates the position of bullets and removes bullets when they collide with obstacles.
 func moveBullets(w *World) {
-	for i := 0; i < len(w.bullets); i++ {
+	for i := len(w.bullets) - 1; i >= 0; i-- {
 		// Move the bullet up
 		w.bullets[i].location.y--
 
 		// Check if the bullet collides with an obstacle (green area)
-
 		if w.bullets[i].location.x <= w.river[w.bullets[i].location.y].l ||
 			w.bullets[i].location.x >= w.river[w.bullets[i].location.y].r ||
 			w.bullets[i].location.y == 0 {
 			// Remove the bullet if it collides with an obstacle
 			w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
-			i-- // Decrement the index as the bullet is removed
 
+		} else {
+
+			for j := len(w.enemies) - 1; j >= 0; j-- {
+				if hit(w.bullets[i].location, w.enemies[j].location) ||
+					hit(Location{w.bullets[i].location.x, w.bullets[i].location.y - 1}, w.enemies[j].location) {
+					//remove enemy
+					w.enemies = append(w.enemies[:j], w.enemies[j+1:]...)
+					//remove bullet
+					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
+					break
+				}
+			}
 		}
 	}
 }
@@ -158,21 +175,34 @@ func drawBullets(w *World) {
 	}
 }
 
+func drawEnemies(w *World) {
+	for _, enemy := range w.enemies {
+		termbox.SetCell(enemy.location.x, enemy.location.y, 'E', termbox.ColorDefault, termbox.ColorBlue)
+	}
+
+}
+
 // drawPlayer function draws the player on the screen.
 func drawPlayer(w *World) {
 	termbox.SetChar(w.player.location.x, w.player.location.y, w.player.symbol)
 }
 
 // physics function simulates the physics of the game world.
-func physics(wg *sync.WaitGroup, w *World) {
-	defer wg.Done()
-	for !w.player.died {
-		// Check if player is out of bounds
+func physics(w *World) {
+	shouldExecute = !shouldExecute
+	if shouldExecute {
+		// Check player boundaries and enemy collisions
 		if w.player.location.x < w.river[w.player.location.y].l ||
 			w.player.location.x >= w.river[w.player.location.y].r {
 			w.player.died = true
+		} else {
+			for i := len(w.enemies) - 1; i >= 0; i-- {
+				if hit(w.enemies[i].location, w.player.location) {
+					w.player.died = true
+					break
+				}
+			}
 		}
-
 		// Shift the river obstacles
 		for y := w.height - 1; y > 0; y-- {
 			w.river[y] = w.river[y-1]
@@ -180,16 +210,16 @@ func physics(wg *sync.WaitGroup, w *World) {
 
 		// Update river boundaries
 		if w.nextEnd < w.river[0].r {
-			w.river[0].r -= 1
+			w.river[0].r--
 		}
 		if w.nextEnd > w.river[0].r {
-			w.river[0].r += 1
+			w.river[0].r++
 		}
 		if w.nextStart < w.river[0].l {
-			w.river[0].l -= 1
+			w.river[0].l--
 		}
 		if w.nextStart > w.river[0].l {
-			w.river[0].l += 1
+			w.river[0].l++
 		}
 
 		// Randomize river boundaries
@@ -199,8 +229,23 @@ func physics(wg *sync.WaitGroup, w *World) {
 				w.nextEnd = 50 - rand.Intn(40) + w.nextStart
 			}
 		}
-		time.Sleep(200 * time.Millisecond)
+
+		// Move enemies and add new enemies
+		for i := len(w.enemies) - 1; i >= 0; i-- {
+			if w.enemies[i].location.y > w.height {
+				w.enemies = append(w.enemies[:i], w.enemies[i+1:]...)
+			} else {
+				w.enemies[i].location.y++
+			}
+		}
+		if rand.Intn(10) > 5 {
+			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
+			newEnemy := Enemy{location: Location{x: x, y: 0}}
+			w.enemies = append(w.enemies, newEnemy)
+		}
 	}
+	moveBullets(w)
+	time.Sleep(100 * time.Millisecond)
 }
 
 // listenToKeyboard function listens to keyboard input and updates the player's position accordingly.
@@ -252,23 +297,14 @@ func main() {
 	// Initialize the game
 	world := newWorld()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Start drawing and physics goroutines
-	go draw(&wg, world)
-	go physics(&wg, world)
-
-	// Start a separate goroutine for moving bullets
-	go func() {
-		for {
-			moveBullets(world)
-			time.Sleep(100 * time.Millisecond) // Adjust the sleep time for bullet speed
-		}
-	}()
-
 	// Listen to keyboard input
 	go listenToKeyboard(world)
 
-	wg.Wait()
+	shouldExecute = false
+	for !world.player.died {
+		// Start drawing and physics goroutines
+		termbox.HideCursor()
+		draw(world)
+		physics(world)
+	}
 }
