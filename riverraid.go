@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/nsf/termbox-go"
@@ -23,6 +25,8 @@ type Player struct {
 	symbol   rune     // Symbol representing the player
 	location Location // Current location of the player
 	died     bool     // Flag indicating if the player is dead
+	score    int
+	fuel     int
 }
 
 // River represents the river obstacles in the game.
@@ -41,34 +45,41 @@ type Enemy struct {
 type World struct {
 	player    Player   // The player
 	river     []River  // List of river obstacles
-	height    int      // Height of the game world
-	width     int      // Width of the game world
+	heightBox int      // heightBox  of the game world
+	widthBox  int      // widthBox  of the game world
 	nextStart int      // Next start position of the river
 	nextEnd   int      // Next end position of the river
 	bullets   []Bullet // List of bullets fired by the player
 	enemies   []Enemy
 }
 
+func newPlayer() *Player {
+	maxX, maxY := termbox.Size()
+	return &Player{
+		symbol:   'A',
+		location: Location{x: maxX / 2, y: maxY - 5},
+		died:     false,
+		score:    0,
+		fuel:     100,
+	}
+}
+
 func newWorld() *World {
 	maxX, maxY := termbox.Size()
 
 	world := World{
-		player: Player{
-			symbol:   'A',
-			location: Location{x: maxX / 2, y: maxY - 2},
-			died:     false,
-		},
-		width:     maxX,
-		height:    maxY,
+		player:    *newPlayer(),
+		widthBox:  maxX,
+		heightBox: maxY - 3,
 		nextEnd:   maxX/2 + 10,
 		nextStart: maxX/2 - 10,
 		river:     make([]River, maxY)}
 
-	for y := maxY - 1; y >= 0; y-- {
+	for y := world.heightBox - 1; y >= 0; y-- {
 		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
 	}
-	for y := maxY - 1; y >= 0; y-- {
-		if y <= 2*maxY/3 {
+	for y := world.heightBox - 1; y >= 0; y-- {
+		if y <= 2*world.heightBox/3 {
 			if world.nextEnd < world.river[y+1].r {
 				world.river[y].r = world.river[y+1].r - 1
 			}
@@ -105,12 +116,20 @@ func hit(l1, l2 Location) bool {
 	return l1.x == l2.x && l1.y == l2.y
 }
 
+func printText(s string, x, y int, fg, bg termbox.Attribute) {
+	for _, ch := range s {
+		termbox.SetCell(x, y, ch, fg, bg)
+		x++
+	}
+}
+
 // draw function is responsible for rendering the game world.
 func draw(w *World) {
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 
 	// Draw the map
 	drawMap(w)
+	drawStatusBar(w)
 
 	// Draw the player
 	drawPlayer(w)
@@ -126,16 +145,37 @@ func draw(w *World) {
 
 // drawMap function draws the river obstacles on the screen.
 func drawMap(w *World) {
-	for y := 0; y < len(w.river); y++ {
-		for lx := 0; lx < w.river[y].l; lx++ {
-			termbox.SetCell(lx, y, ' ', termbox.ColorDefault, termbox.ColorGreen)
-		}
-		for rx := w.river[y].r; rx < w.width; rx++ {
-			termbox.SetCell(rx, y, ' ', termbox.ColorDefault, termbox.ColorGreen)
+	_, maxY := termbox.Size()
+
+	for y := 0; y < w.heightBox; y++ {
+		for l := 0; l <= w.widthBox; l++ {
+			termbox.SetCell(l, y, ' ', termbox.ColorDefault, termbox.ColorGreen)
 		}
 		for re := w.river[y].l; re < w.river[y].r; re++ {
 			termbox.SetCell(re, y, ' ', termbox.ColorDefault, termbox.ColorBlue)
 		}
+	}
+	for y := w.heightBox; y <= maxY; y++ {
+		printText(strings.Repeat(" ", w.widthBox), 0, y, termbox.ColorBlack, termbox.ColorDarkGray)
+	}
+}
+
+func drawStatusBar(w *World) {
+	// Print player score on the terminal
+	formattedScore := fmt.Sprintf("Score: %+v", w.player.score)
+	printText(formattedScore, w.widthBox/4, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
+	formattedScore = fmt.Sprintf("q: quit, p:pause %+v", w.player.score)
+	printText(formattedScore, w.widthBox/4*3, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
+
+	printText(" F U E L  ", w.widthBox/2-5, w.heightBox+1, termbox.ColorBlack, termbox.ColorCyan)
+	fu := w.player.fuel / 10
+	switch {
+	case fu == 0:
+		w.player.died = true
+	case fu <= 3:
+		printText(" F U E L  "[:fu], w.widthBox/2-5, w.heightBox+1, termbox.ColorBlack, termbox.ColorRed)
+	case fu > 3:
+		printText(" F U E L  "[:fu], w.widthBox/2-5, w.heightBox+1, termbox.ColorBlack, termbox.ColorYellow)
 	}
 }
 
@@ -161,6 +201,7 @@ func moveBullets(w *World) {
 					w.enemies = append(w.enemies[:j], w.enemies[j+1:]...)
 					//remove bullet
 					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
+					w.player.score += 10
 					break
 				}
 			}
@@ -191,6 +232,7 @@ func drawPlayer(w *World) {
 func physics(w *World) {
 	shouldExecute = !shouldExecute
 	if shouldExecute {
+		w.player.fuel--
 		// Check player boundaries and enemy collisions
 		if w.player.location.x < w.river[w.player.location.y].l ||
 			w.player.location.x >= w.river[w.player.location.y].r {
@@ -204,7 +246,7 @@ func physics(w *World) {
 			}
 		}
 		// Shift the river obstacles
-		for y := w.height - 1; y > 0; y-- {
+		for y := w.heightBox - 1; y > 0; y-- {
 			w.river[y] = w.river[y-1]
 		}
 
@@ -232,7 +274,7 @@ func physics(w *World) {
 
 		// Move enemies and add new enemies
 		for i := len(w.enemies) - 1; i >= 0; i-- {
-			if w.enemies[i].location.y > w.height {
+			if w.enemies[i].location.y >= w.heightBox-1 {
 				w.enemies = append(w.enemies[:i], w.enemies[i+1:]...)
 			} else {
 				w.enemies[i].location.y++
@@ -261,11 +303,11 @@ func listenToKeyboard(w *World) {
 					w.player.location.y -= 1
 				}
 			case 's':
-				if w.player.location.y < w.height-2 {
+				if w.player.location.y < w.heightBox-1 {
 					w.player.location.y += 1
 				}
 			case 'd':
-				if w.player.location.x < w.width-2 {
+				if w.player.location.x < w.widthBox-1 {
 					w.player.location.x += 1
 				}
 			case 'a':
