@@ -370,6 +370,13 @@ func listenToKeyboard(w *World) {
 			switch ev.Ch {
 			case 'q':
 				w.player.status = Quit
+			case 'p':
+				if w.player.status != Paused {
+					previouStatus = w.player.status
+					w.player.status = Paused
+				} else {
+					w.player.status = previouStatus
+				}
 			case 'w':
 				if w.player.location.y > 1 {
 					w.player.location.y -= 1
@@ -429,6 +436,11 @@ func main() {
 			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
 			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
 		case Paused:
+			mess := "Paused. press P key to continue"
+			printText(mess, world.widthBox/2-len(mess)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
+			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
+			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+
 		}
 		termbox.Flush()
 	}
