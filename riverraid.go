@@ -11,8 +11,7 @@ import (
 
 // Location represents a position in the game world.
 type Location struct {
-	x int
-	y int
+	x, y int
 }
 
 // Bullet represents a bullet fired by the player.
@@ -20,13 +19,30 @@ type Bullet struct {
 	location Location
 }
 
+// PlayerStatus represents the status of a player.
+type PlayerStatus int
+
+const (
+	Alive PlayerStatus = iota
+	Dead
+	Quit
+	Paused
+)
+
+const (
+	messageHitByRock  = "You have been hit by a rock!"
+	messageHitByEnemy = "You have been hit by an enemy!"
+	messageOutOfFuel  = "You are out of fuel!"
+)
+
 // Player represents the player in the game.
 type Player struct {
 	symbol   rune     // Symbol representing the player
 	location Location // Current location of the player
-	died     bool     // Flag indicating if the player is dead
 	score    int
 	fuel     int
+	status   PlayerStatus
+	message  string
 }
 
 // River represents the river obstacles in the game.
@@ -37,20 +53,28 @@ type River struct {
 
 var shouldExecute bool
 
+// Enemy represents an enemy in the game.
 type Enemy struct {
+	location Location // Current location of the enemy
+	status   EnemyStatus
+}
+
+type Fuel struct {
 	location Location
+	length   int
 }
 
 // World represents the game world.
 type World struct {
 	player    Player   // The player
-	river     []River  // List of river obstacles
-	heightBox int      // heightBox  of the game world
 	widthBox  int      // widthBox  of the game world
+	heightBox int      // heightBox  of the game world
 	nextStart int      // Next start position of the river
 	nextEnd   int      // Next end position of the river
+	river     []River  // List of river obstacles
 	bullets   []Bullet // List of bullets fired by the player
 	enemies   []Enemy
+	fuels     []Fuel
 }
 
 func newPlayer() *Player {
@@ -58,9 +82,9 @@ func newPlayer() *Player {
 	return &Player{
 		symbol:   'A',
 		location: Location{x: maxX / 2, y: maxY - 5},
-		died:     false,
 		score:    0,
 		fuel:     100,
+		status:   Alive,
 	}
 }
 
@@ -73,7 +97,11 @@ func newWorld() *World {
 		heightBox: maxY - 3,
 		nextEnd:   maxX/2 + 10,
 		nextStart: maxX/2 - 10,
-		river:     make([]River, maxY)}
+		river:     make([]River, maxY),
+		bullets:   []Bullet{},
+		enemies:   []Enemy{},
+		fuels:     []Fuel{},
+	}
 
 	for y := world.heightBox - 1; y >= 0; y-- {
 		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
@@ -125,22 +153,14 @@ func printText(s string, x, y int, fg, bg termbox.Attribute) {
 
 // draw function is responsible for rendering the game world.
 func draw(w *World) {
-	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 
-	// Draw the map
 	drawMap(w)
 	drawStatusBar(w)
-
-	// Draw the player
 	drawPlayer(w)
-
-	// Draw the bullets
 	drawBullets(w)
-
-	// Dray the enemies
 	drawEnemies(w)
+	drawFuel(w)
 
-	termbox.Flush()
 }
 
 // drawMap function draws the river obstacles on the screen.
@@ -171,7 +191,9 @@ func drawStatusBar(w *World) {
 	fu := w.player.fuel / 10
 	switch {
 	case fu == 0:
-		w.player.died = true
+		w.player.status = Dead
+		w.player.symbol = 'X'
+		w.player.message = messageOutOfFuel
 	case fu <= 3:
 		printText(" F U E L  "[:fu], w.widthBox/2-5, w.heightBox+1, termbox.ColorBlack, termbox.ColorRed)
 	case fu > 3:
@@ -181,6 +203,7 @@ func drawStatusBar(w *World) {
 
 // moveBullets function updates the position of bullets and removes bullets when they collide with obstacles.
 func moveBullets(w *World) {
+mainloop:
 	for i := len(w.bullets) - 1; i >= 0; i-- {
 		// Move the bullet up
 		w.bullets[i].location.y--
@@ -202,7 +225,17 @@ func moveBullets(w *World) {
 					//remove bullet
 					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
 					w.player.score += 10
-					break
+					continue mainloop
+				}
+			}
+			for j := len(w.fuels) - 1; j >= 0; j-- {
+				if hit(w.bullets[i].location, w.fuels[j].location) ||
+					hit(Location{w.bullets[i].location.x, w.bullets[i].location.y - 1}, w.fuels[j].location) {
+					w.fuels = append(w.fuels[:j], w.fuels[j+1:]...)
+					//remove bullet
+					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
+					w.player.score += 10
+					continue mainloop
 				}
 			}
 		}
@@ -223,6 +256,17 @@ func drawEnemies(w *World) {
 
 }
 
+func drawFuel(w *World) {
+	f := "FUEL"
+	for _, fuel := range w.fuels {
+		termbox.SetCell(fuel.location.x, fuel.location.y, rune(f[3]), termbox.ColorDefault, termbox.ColorWhite)
+		termbox.SetCell(fuel.location.x, fuel.location.y-1, rune(f[2]), termbox.ColorDefault, termbox.ColorCyan)
+		termbox.SetCell(fuel.location.x, fuel.location.y-2, rune(f[1]), termbox.ColorDefault, termbox.ColorWhite)
+		termbox.SetCell(fuel.location.x, fuel.location.y-3, rune(f[0]), termbox.ColorDefault, termbox.ColorCyan)
+	}
+
+}
+
 // drawPlayer function draws the player on the screen.
 func drawPlayer(w *World) {
 	termbox.SetChar(w.player.location.x, w.player.location.y, w.player.symbol)
@@ -236,13 +280,27 @@ func physics(w *World) {
 		// Check player boundaries and enemy collisions
 		if w.player.location.x < w.river[w.player.location.y].l ||
 			w.player.location.x >= w.river[w.player.location.y].r {
-			w.player.died = true
+			w.player.status = Dead
+			w.player.symbol = 'X'
+			w.player.message = messageHitByRock
 		} else {
 			for i := len(w.enemies) - 1; i >= 0; i-- {
 				if hit(w.enemies[i].location, w.player.location) {
-					w.player.died = true
+					w.player.status = Dead
+					w.player.symbol = 'X'
+					w.player.message = messageHitByEnemy
 					break
 				}
+			}
+		}
+		for i := len(w.fuels) - 1; i >= 0; i-- {
+			if w.player.location.x == w.fuels[i].location.x &&
+				w.player.location.y <= w.fuels[i].location.y &&
+				w.player.location.y >= w.fuels[i].location.y-4 {
+				w.player.fuel += 10
+			}
+			if w.player.fuel > 100 {
+				w.player.fuel = 100
 			}
 		}
 		// Shift the river obstacles
@@ -285,6 +343,19 @@ func physics(w *World) {
 			newEnemy := Enemy{location: Location{x: x, y: 0}}
 			w.enemies = append(w.enemies, newEnemy)
 		}
+
+		for i := len(w.fuels) - 1; i >= 0; i-- {
+			if w.fuels[i].location.y >= w.heightBox-1 {
+				w.fuels = append(w.fuels[:i], w.fuels[i+1:]...)
+			} else {
+				w.fuels[i].location.y++
+			}
+		}
+		if rand.Intn(10) > 7 {
+			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
+			newFuel := Fuel{location: Location{x: x, y: 0}, length: 4}
+			w.fuels = append(w.fuels, newFuel)
+		}
 	}
 	moveBullets(w)
 	time.Sleep(100 * time.Millisecond)
@@ -292,12 +363,13 @@ func physics(w *World) {
 
 // listenToKeyboard function listens to keyboard input and updates the player's position accordingly.
 func listenToKeyboard(w *World) {
-	for !w.player.died {
+	var previouStatus PlayerStatus
+	for w.player.status != Quit {
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventKey:
 			switch ev.Ch {
 			case 'q':
-				w.player.died = true
+				w.player.status = Quit
 			case 'w':
 				if w.player.location.y > 1 {
 					w.player.location.y -= 1
@@ -343,10 +415,21 @@ func main() {
 	go listenToKeyboard(world)
 
 	shouldExecute = false
-	for !world.player.died {
-		// Start drawing and physics goroutines
+
+	for world.player.status != Quit {
 		termbox.HideCursor()
+		switch world.player.status {
+		case Alive:
 		draw(world)
 		physics(world)
+		case Dead:
+			drawPlayer(world)
+			world.player.status = Dead
+			printText(world.player.message, world.widthBox/2-len(world.player.message)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
+			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
+			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+		case Paused:
+		}
+		termbox.Flush()
 	}
 }
