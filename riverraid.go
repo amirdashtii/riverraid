@@ -45,6 +45,16 @@ type Player struct {
 	message  string
 }
 
+func newPlayer() *Player {
+	maxX, maxY := termbox.Size()
+	return &Player{
+		symbol:   'A',
+		location: Location{x: maxX / 2, y: maxY - 5},
+		score:    0,
+		fuel:     100,
+		status:   Alive,
+	}
+}
 // River represents the river obstacles in the game.
 type River struct {
 	l int // Left boundary of the river
@@ -89,16 +99,6 @@ type World struct {
 	fuels     []Fuel
 }
 
-func newPlayer() *Player {
-	maxX, maxY := termbox.Size()
-	return &Player{
-		symbol:   'A',
-		location: Location{x: maxX / 2, y: maxY - 5},
-		score:    0,
-		fuel:     100,
-		status:   Alive,
-	}
-}
 
 func newWorld() *World {
 	maxX, maxY := termbox.Size()
@@ -114,40 +114,8 @@ func newWorld() *World {
 		enemies:   []Enemy{},
 		fuels:     []Fuel{},
 	}
-
 	for y := world.heightBox - 1; y >= 0; y-- {
 		world.river[y] = River{l: maxX/2 - 5, r: maxX/2 + 5}
-	}
-	for y := world.heightBox - 1; y >= 0; y-- {
-		if y <= 2*world.heightBox/3 {
-			if world.nextEnd < world.river[y+1].r {
-				world.river[y].r = world.river[y+1].r - 1
-			}
-			if world.nextEnd > world.river[y+1].r {
-				world.river[y].r = world.river[y+1].r + 1
-			}
-			if world.nextStart < world.river[y+1].l {
-				world.river[y].l = world.river[y+1].l - 1
-			}
-			if world.nextStart > world.river[y+1].l {
-				world.river[y].l = world.river[y+1].l + 1
-			}
-			if world.nextStart == world.river[y+1].l {
-				world.river[y].l = world.nextStart
-			}
-			if world.nextEnd == world.river[y+1].r {
-				world.river[y].r = world.nextEnd
-			}
-
-			// Randomize river boundaries
-			if world.nextStart == world.river[y].l || world.nextEnd == world.river[y].r || (world.river[y].l+5) >= world.river[y].r {
-				if rand.Intn(10) > 8 {
-					world.nextStart = rand.Intn(40) - 20 + world.nextStart
-					world.nextEnd = 50 - rand.Intn(40) + world.nextStart
-				}
-			}
-
-		}
 	}
 	return &world
 }
@@ -165,14 +133,12 @@ func printText(s string, x, y int, fg, bg termbox.Attribute) {
 
 // draw function is responsible for rendering the game world.
 func draw(w *World) {
-
 	drawMap(w)
 	drawStatusBar(w)
 	drawPlayer(w)
 	drawBullets(w)
 	drawEnemies(w)
 	drawFuel(w)
-
 }
 
 // drawMap function draws the river obstacles on the screen.
@@ -281,7 +247,6 @@ func drawEnemies(w *World) {
 	for _, enemy := range w.enemies {
 		termbox.SetCell(enemy.location.x, enemy.location.y, enemy.symbol, termbox.ColorDefault, termbox.ColorBlue)
 	}
-
 }
 
 func drawFuel(w *World) {
@@ -291,13 +256,79 @@ func drawFuel(w *World) {
 		termbox.SetCell(fuel.location.x, fuel.location.y-2, rune(fuel.symbol[1]), termbox.ColorDefault, termbox.ColorWhite)
 		termbox.SetCell(fuel.location.x, fuel.location.y-3, rune(fuel.symbol[0]), termbox.ColorDefault, termbox.ColorCyan)
 	}
-
 }
 
 // drawPlayer function draws the player on the screen.
 func drawPlayer(w *World) {
 	termbox.SetChar(w.player.location.x, w.player.location.y, w.player.symbol)
 }
+
+func startgame(w *World) {
+	for i := w.heightBox / 3 * 2; i > 0; i-- {
+		draw(w)
+		ShiftRiver(w)
+		moveAddItems(w)
+		termbox.Flush()
+		time.Sleep(10 * time.Millisecond)
+	}
+	w.player.status = Paused
+}
+
+func moveAddItems (w *World){
+	// Move enemies and add new enemies
+	for i := len(w.enemies) - 1; i >= 0; i-- {
+		if w.enemies[i].location.y >= w.heightBox-1 {
+			w.enemies = append(w.enemies[:i], w.enemies[i+1:]...)
+		} else {
+			w.enemies[i].location.y++
+		}
+	}
+	if rand.Intn(10) > 5 {
+		x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
+		newEnemy := Enemy{location: Location{x: x, y: 0}, symbol: 'E', status: ThingAlive}
+		w.enemies = append(w.enemies, newEnemy)
+	}
+
+	for i := len(w.fuels) - 1; i >= 0; i-- {
+		if w.fuels[i].location.y >= w.heightBox-1 {
+			w.fuels = append(w.fuels[:i], w.fuels[i+1:]...)
+		} else {
+			w.fuels[i].location.y++
+		}
+	}
+	if rand.Intn(10) > 7 {
+		x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
+		newFuel := Fuel{location: Location{x: x, y: 0}, length: 4, symbol: "FUEL", status: ThingAlive}
+		w.fuels = append(w.fuels, newFuel)
+	}
+}
+
+func ShiftRiver(w *World){	// Shift the river obstacles
+	for y := w.heightBox - 1; y > 0; y-- {
+		w.river[y] = w.river[y-1]
+	}
+
+	// Update river boundaries
+	if w.nextEnd < w.river[0].r {
+		w.river[0].r--
+	}
+	if w.nextEnd > w.river[0].r {
+		w.river[0].r++
+	}
+	if w.nextStart < w.river[0].l {
+		w.river[0].l--
+	}
+	if w.nextStart > w.river[0].l {
+		w.river[0].l++
+	}
+
+	// Randomize river boundaries
+	if w.nextStart == w.river[0].l || w.nextEnd == w.river[0].r || (w.river[0].l+10) >= w.river[0].r {
+		if rand.Intn(10) > 8 {
+			w.nextStart = rand.Intn(40) - 20 + w.nextStart
+			w.nextEnd = 50 - rand.Intn(40) + w.nextStart
+		}
+	}}
 
 // physics function simulates the physics of the game world.
 func physics(w *World) {
@@ -330,59 +361,8 @@ func physics(w *World) {
 				w.player.fuel = 100
 			}
 		}
-		// Shift the river obstacles
-		for y := w.heightBox - 1; y > 0; y-- {
-			w.river[y] = w.river[y-1]
-		}
-
-		// Update river boundaries
-		if w.nextEnd < w.river[0].r {
-			w.river[0].r--
-		}
-		if w.nextEnd > w.river[0].r {
-			w.river[0].r++
-		}
-		if w.nextStart < w.river[0].l {
-			w.river[0].l--
-		}
-		if w.nextStart > w.river[0].l {
-			w.river[0].l++
-		}
-
-		// Randomize river boundaries
-		if w.nextStart == w.river[0].l || w.nextEnd == w.river[0].r || (w.river[0].l+10) >= w.river[0].r {
-			if rand.Intn(10) > 8 {
-				w.nextStart = rand.Intn(40) - 20 + w.nextStart
-				w.nextEnd = 50 - rand.Intn(40) + w.nextStart
-			}
-		}
-
-		// Move enemies and add new enemies
-		for i := len(w.enemies) - 1; i >= 0; i-- {
-			if w.enemies[i].location.y >= w.heightBox-1 {
-				w.enemies = append(w.enemies[:i], w.enemies[i+1:]...)
-			} else {
-				w.enemies[i].location.y++
-			}
-		}
-		if rand.Intn(10) > 5 {
-			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
-			newEnemy := Enemy{location: Location{x: x, y: 0}, symbol: 'E', status: ThingAlive}
-			w.enemies = append(w.enemies, newEnemy)
-		}
-
-		for i := len(w.fuels) - 1; i >= 0; i-- {
-			if w.fuels[i].location.y >= w.heightBox-1 {
-				w.fuels = append(w.fuels[:i], w.fuels[i+1:]...)
-			} else {
-				w.fuels[i].location.y++
-			}
-		}
-		if rand.Intn(10) > 7 {
-			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
-			newFuel := Fuel{location: Location{x: x, y: 0}, length: 4, symbol: "FUEL", status: ThingAlive}
-			w.fuels = append(w.fuels, newFuel)
-		}
+		ShiftRiver(w)
+		moveAddItems(w)
 	}
 	moveBullets(w)
 	time.Sleep(100 * time.Millisecond)
@@ -390,7 +370,7 @@ func physics(w *World) {
 
 // listenToKeyboard function listens to keyboard input and updates the player's position accordingly.
 func listenToKeyboard(w *World) {
-	var previouStatus PlayerStatus
+	var previouStatus PlayerStatus =Alive
 	for w.player.status != Quit {
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventKey:
@@ -424,9 +404,14 @@ func listenToKeyboard(w *World) {
 				switch ev.Key {
 				// TODO  همزمانی تیر و حرکت
 				case termbox.KeySpace:
+					if w.player.status == Paused {
+						w.player.status = previouStatus
+					}
 					// Shoot bullet when space key is pressed
 					newBullet := Bullet{location: Location{x: w.player.location.x, y: w.player.location.y}}
 					w.bullets = append(w.bullets, newBullet)
+				case termbox.KeyEsc:
+					w.player.status = Quit
 				}
 			}
 		case termbox.EventError:
@@ -444,12 +429,12 @@ func main() {
 
 	// Initialize the game
 	world := newWorld()
+	startgame(world)
 
 	// Listen to keyboard input
 	go listenToKeyboard(world)
 
 	shouldExecute = false
-
 	for world.player.status != Quit {
 		termbox.HideCursor()
 		switch world.player.status {
@@ -463,7 +448,7 @@ func main() {
 			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
 			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
 		case Paused:
-			mess := "Paused. press P key to continue"
+			mess := "Paused. press P or Space key to continue"
 			printText(mess, world.widthBox/2-len(mess)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
 			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
 			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
