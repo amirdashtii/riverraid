@@ -53,15 +53,27 @@ type River struct {
 
 var shouldExecute bool
 
+// ThingStatus represents the status of an enemy.
+type ThingStatus int
+
+const (
+	ThingAlive ThingStatus = iota
+	ThingDeadBody
+	ThingDead
+)
+
 // Enemy represents an enemy in the game.
 type Enemy struct {
 	location Location // Current location of the enemy
-	status   EnemyStatus
+	status   ThingStatus
+	symbol   rune
 }
 
 type Fuel struct {
 	location Location
+	status   ThingStatus
 	length   int
+	symbol   string
 }
 
 // World represents the game world.
@@ -218,24 +230,40 @@ mainloop:
 		} else {
 
 			for j := len(w.enemies) - 1; j >= 0; j-- {
-				if hit(w.bullets[i].location, w.enemies[j].location) ||
-					hit(Location{w.bullets[i].location.x, w.bullets[i].location.y - 1}, w.enemies[j].location) {
-					//remove enemy
+				switch w.enemies[j].status {
+				case ThingAlive:
+					if hit(w.bullets[i].location, w.enemies[j].location) ||
+						hit(Location{w.bullets[i].location.x, w.bullets[i].location.y - 1}, w.enemies[j].location) {
+						w.enemies[j].status = ThingDeadBody
+						w.enemies[j].symbol = 'X'
+						w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
+						w.player.score += 10
+						continue mainloop
+					}
+
+				case ThingDeadBody:
+					w.enemies[j].status = ThingDead
+
+				case ThingDead:
 					w.enemies = append(w.enemies[:j], w.enemies[j+1:]...)
-					//remove bullet
-					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
-					w.player.score += 10
-					continue mainloop
 				}
 			}
 			for j := len(w.fuels) - 1; j >= 0; j-- {
-				if hit(w.bullets[i].location, w.fuels[j].location) ||
-					hit(Location{w.bullets[i].location.x, w.bullets[i].location.y - 1}, w.fuels[j].location) {
+				switch w.fuels[j].status {
+				case ThingAlive:
+					if w.bullets[i].location.x == w.fuels[j].location.x &&
+						w.bullets[i].location.y <= w.fuels[j].location.y &&
+						w.bullets[i].location.y >= w.fuels[j].location.y-4 {
+						w.fuels[j].status = ThingDeadBody
+						w.fuels[j].symbol = " X X"
+						w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
+						w.player.score += 10
+						continue mainloop
+					}
+				case ThingDeadBody:
+					w.fuels[j].status = ThingDead
+				case ThingDead:
 					w.fuels = append(w.fuels[:j], w.fuels[j+1:]...)
-					//remove bullet
-					w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
-					w.player.score += 10
-					continue mainloop
 				}
 			}
 		}
@@ -251,18 +279,17 @@ func drawBullets(w *World) {
 
 func drawEnemies(w *World) {
 	for _, enemy := range w.enemies {
-		termbox.SetCell(enemy.location.x, enemy.location.y, 'E', termbox.ColorDefault, termbox.ColorBlue)
+		termbox.SetCell(enemy.location.x, enemy.location.y, enemy.symbol, termbox.ColorDefault, termbox.ColorBlue)
 	}
 
 }
 
 func drawFuel(w *World) {
-	f := "FUEL"
 	for _, fuel := range w.fuels {
-		termbox.SetCell(fuel.location.x, fuel.location.y, rune(f[3]), termbox.ColorDefault, termbox.ColorWhite)
-		termbox.SetCell(fuel.location.x, fuel.location.y-1, rune(f[2]), termbox.ColorDefault, termbox.ColorCyan)
-		termbox.SetCell(fuel.location.x, fuel.location.y-2, rune(f[1]), termbox.ColorDefault, termbox.ColorWhite)
-		termbox.SetCell(fuel.location.x, fuel.location.y-3, rune(f[0]), termbox.ColorDefault, termbox.ColorCyan)
+		termbox.SetCell(fuel.location.x, fuel.location.y, rune(fuel.symbol[3]), termbox.ColorDefault, termbox.ColorWhite)
+		termbox.SetCell(fuel.location.x, fuel.location.y-1, rune(fuel.symbol[2]), termbox.ColorDefault, termbox.ColorCyan)
+		termbox.SetCell(fuel.location.x, fuel.location.y-2, rune(fuel.symbol[1]), termbox.ColorDefault, termbox.ColorWhite)
+		termbox.SetCell(fuel.location.x, fuel.location.y-3, rune(fuel.symbol[0]), termbox.ColorDefault, termbox.ColorCyan)
 	}
 
 }
@@ -340,7 +367,7 @@ func physics(w *World) {
 		}
 		if rand.Intn(10) > 5 {
 			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
-			newEnemy := Enemy{location: Location{x: x, y: 0}}
+			newEnemy := Enemy{location: Location{x: x, y: 0}, symbol: 'E', status: ThingAlive}
 			w.enemies = append(w.enemies, newEnemy)
 		}
 
@@ -353,7 +380,7 @@ func physics(w *World) {
 		}
 		if rand.Intn(10) > 7 {
 			x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
-			newFuel := Fuel{location: Location{x: x, y: 0}, length: 4}
+			newFuel := Fuel{location: Location{x: x, y: 0}, length: 4, symbol: "FUEL", status: ThingAlive}
 			w.fuels = append(w.fuels, newFuel)
 		}
 	}
@@ -427,8 +454,8 @@ func main() {
 		termbox.HideCursor()
 		switch world.player.status {
 		case Alive:
-		draw(world)
-		physics(world)
+			draw(world)
+			physics(world)
 		case Dead:
 			drawPlayer(world)
 			world.player.status = Dead
