@@ -25,14 +25,15 @@ type PlayerStatus int
 const (
 	Alive PlayerStatus = iota
 	Dead
+	DeadBody
 	Quit
 	Paused
 )
 
 const (
-	messageHitByRock  = "You have been hit by a rock!"
-	messageHitByEnemy = "You have been hit by an enemy!"
-	messageOutOfFuel  = "You are out of fuel!"
+	messageHitByRock  = "A rock has hit you!"
+	messageHitByEnemy = "An enemy has delivered a hit to you!"
+	messageOutOfFuel  = "You have run out of fuel!"
 )
 
 // Player represents the player in the game.
@@ -43,6 +44,7 @@ type Player struct {
 	fuel     int
 	status   PlayerStatus
 	message  string
+	lives    int // Number of remaining lives for the player
 }
 
 func newPlayer() *Player {
@@ -53,8 +55,11 @@ func newPlayer() *Player {
 		score:    0,
 		fuel:     100,
 		status:   Alive,
+		lives:    3, // Set initial number of lives
+
 	}
 }
+
 // River represents the river obstacles in the game.
 type River struct {
 	l int // Left boundary of the river
@@ -98,7 +103,6 @@ type World struct {
 	enemies   []Enemy
 	fuels     []Fuel
 }
-
 
 func newWorld() *World {
 	maxX, maxY := termbox.Size()
@@ -160,10 +164,12 @@ func drawMap(w *World) {
 
 func drawStatusBar(w *World) {
 	// Print player score on the terminal
-	formattedScore := fmt.Sprintf("Score: %+v", w.player.score)
-	printText(formattedScore, w.widthBox/4, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
-	formattedScore = fmt.Sprintf("q: quit, p:pause %+v", w.player.score)
-	printText(formattedScore, w.widthBox/4*3, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
+	formattedText := fmt.Sprintf("Score: %+v", w.player.score)
+	printText(formattedText, w.widthBox/4, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
+	formattedText = fmt.Sprintf("Lives: %+v", w.player.lives)
+	printText(formattedText, w.widthBox/2-4, w.heightBox+2, termbox.ColorWhite, termbox.ColorDarkGray)
+	formattedText = fmt.Sprintf("q: quit, p:pause %+v", w.player.score)
+	printText(formattedText, w.widthBox/4*3, w.heightBox+1, termbox.ColorWhite, termbox.ColorDarkGray)
 
 	printText(" F U E L  ", w.widthBox/2-5, w.heightBox+1, termbox.ColorBlack, termbox.ColorCyan)
 	fu := w.player.fuel / 10
@@ -185,16 +191,13 @@ mainloop:
 	for i := len(w.bullets) - 1; i >= 0; i-- {
 		// Move the bullet up
 		w.bullets[i].location.y--
-
 		// Check if the bullet collides with an obstacle (green area)
 		if w.bullets[i].location.x <= w.river[w.bullets[i].location.y].l ||
 			w.bullets[i].location.x >= w.river[w.bullets[i].location.y].r ||
 			w.bullets[i].location.y == 0 {
 			// Remove the bullet if it collides with an obstacle
 			w.bullets = append(w.bullets[:i], w.bullets[i+1:]...)
-
 		} else {
-
 			for j := len(w.enemies) - 1; j >= 0; j-- {
 				switch w.enemies[j].status {
 				case ThingAlive:
@@ -262,7 +265,6 @@ func drawFuel(w *World) {
 func drawPlayer(w *World) {
 	termbox.SetChar(w.player.location.x, w.player.location.y, w.player.symbol)
 }
-
 func startgame(w *World) {
 	for i := w.heightBox / 3 * 2; i > 0; i-- {
 		draw(w)
@@ -274,7 +276,7 @@ func startgame(w *World) {
 	w.player.status = Paused
 }
 
-func moveAddItems (w *World){
+func moveAddItems(w *World) {
 	// Move enemies and add new enemies
 	for i := len(w.enemies) - 1; i >= 0; i-- {
 		if w.enemies[i].location.y >= w.heightBox-1 {
@@ -296,14 +298,14 @@ func moveAddItems (w *World){
 			w.fuels[i].location.y++
 		}
 	}
-	if rand.Intn(10) > 7 {
+	if rand.Intn(10) > 8 {
 		x := rand.Intn(w.river[0].r-w.river[0].l) + w.river[0].l
 		newFuel := Fuel{location: Location{x: x, y: 0}, length: 4, symbol: "FUEL", status: ThingAlive}
 		w.fuels = append(w.fuels, newFuel)
 	}
 }
 
-func ShiftRiver(w *World){	// Shift the river obstacles
+func ShiftRiver(w *World) { // Shift the river obstacles
 	for y := w.heightBox - 1; y > 0; y-- {
 		w.river[y] = w.river[y-1]
 	}
@@ -328,7 +330,8 @@ func ShiftRiver(w *World){	// Shift the river obstacles
 			w.nextStart = rand.Intn(40) - 20 + w.nextStart
 			w.nextEnd = 50 - rand.Intn(40) + w.nextStart
 		}
-	}}
+	}
+}
 
 // physics function simulates the physics of the game world.
 func physics(w *World) {
@@ -369,8 +372,9 @@ func physics(w *World) {
 }
 
 // listenToKeyboard function listens to keyboard input and updates the player's position accordingly.
+var previouStatus PlayerStatus = Alive
+
 func listenToKeyboard(w *World) {
-	var previouStatus PlayerStatus =Alive
 	for w.player.status != Quit {
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventKey:
@@ -407,7 +411,14 @@ func listenToKeyboard(w *World) {
 					if w.player.status == Paused {
 						w.player.status = previouStatus
 					}
-					// Shoot bullet when space key is pressed
+					if w.player.status == DeadBody {
+						// Place the player in the middle of the river and pause the game
+						w.player.symbol = 'A'
+						w.player.fuel = 100
+						w.player.location.x = (w.river[w.heightBox-1].r + w.river[w.heightBox-1].l) / 2
+						w.player.location.y = w.heightBox - 1
+						w.player.status = Alive
+					}
 					newBullet := Bullet{location: Location{x: w.player.location.x, y: w.player.location.y}}
 					w.bullets = append(w.bullets, newBullet)
 				case termbox.KeyEsc:
@@ -442,17 +453,33 @@ func main() {
 			draw(world)
 			physics(world)
 		case Dead:
-			drawPlayer(world)
-			world.player.status = Dead
-			printText(world.player.message, world.widthBox/2-len(world.player.message)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
-			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
-			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
-		case Paused:
-			mess := "Paused. press P or Space key to continue"
-			printText(mess, world.widthBox/2-len(mess)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
-			formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
-			printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+			// Reduce remaining lives when the player dies
+			if world.player.lives == 0 {
+				// End the game if no remaining lives
+				printText(fmt.Sprintf("You burned! Game over. Your score: %d", world.player.score), world.widthBox/2-20, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
+				formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
+				printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+				} else {
+				world.player.lives--
+				world.player.status = DeadBody
+				text := fmt.Sprintf("Oh no! %s", world.player.message)
+				printText(text, world.widthBox/2-len(text)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
+				text = fmt.Sprintf("Your score: %d", world.player.score)
+				printText(text, world.widthBox/2-len(text)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+				text = fmt.Sprintf("Lives remaining: %d", world.player.lives)
+				printText(text, world.widthBox/2-len(text)/2, world.heightBox/2+2, termbox.ColorDefault, termbox.ColorDefault)
+				text = "Press space to continue..."
+				printText(text, world.widthBox/2-len(text)/2, world.heightBox/2+3, termbox.ColorDefault, termbox.ColorDefault)
 
+			}
+			drawPlayer(world)
+		case Paused:
+			if world.player.lives == 0 {
+				mess := "Paused. Press Space to continue."
+				printText(mess, world.widthBox/2-len(mess)/2, world.heightBox/2, termbox.ColorDefault, termbox.ColorDefault)
+				formattedScore := fmt.Sprintf("Your Score: %+v", world.player.score)
+				printText(formattedScore, world.widthBox/2-len(formattedScore)/2, world.heightBox/2+1, termbox.ColorDefault, termbox.ColorDefault)
+			}
 		}
 		termbox.Flush()
 	}
